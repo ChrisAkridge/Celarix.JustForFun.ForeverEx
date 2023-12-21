@@ -1,0 +1,128 @@
+ForeverEx
+A simple processor architecture that does not encounter errors or halts (but corrupts a ton of memory). Designed to be ran on arbitrary program code.
+
+Registers:
+	- A, B: 16-bit general purpose registers (register numbers 0, 1)
+	- X, Y: Indexing registers, only used as pointers (register numbers 2, 3)
+	- SP: 16-bit stack pointer, grows upward (register number 4)
+	- IP: 16-bit instruction pointer (register number 5)
+	- BANKNUM: 8-bit (only bottom 4 bits used) bank register (register number 6)
+	- FLAGS: 8-bit comparison flags register (register number 7)
+		- Bits:
+			0. Equal flag
+			1. Greater-than flag
+			2. Less-than flag
+		- Compare checks:
+			- x == y: FLAGS & 7 == 1
+			- x < y: FLAGS & 7 == 4
+			- x > y: FLAGS & 7 == 2
+			- x <= y: FLAGS & 7 == 5
+			- x >= y: FLAGS & 7 == 3
+			- x != y: FLAGS & 7 == 0
+Memory Model:
+	- 16-bit address space
+	- 0x0000 to 0x7FFF maps to RAM and can be modified
+	- 0x8000 to 0xFFFF maps to ROM, typically the program, and cannot be modified
+	- ROM is made up of 16 32-KB banks which can be switched between, making a total of 1 MB of possible ROM
+	- If the program is less than 1 MB, 00 bytes will fill empty space
+	- Writes to ROM succeed but don't change anything
+Instruction Format:
+	- Instructions start with an opcode and are followed by one or more operand bytes
+	- Operand types:
+		- #regnum: An 8-bit value where only the bottom 3 bits are used; encodes any of the 8 registers
+		- #regtoreg: An 8-bit value where only the bottom 6 bits are used; the high 3 bits (00xx x000) encode the source register and the low 3 bits (0000 0xxx) encode the destination register
+			- Written as src dst (i.e. A X, Y IP, etc.)
+		- xxxx: A 16-bit little endian value. If storing into an 8-bit register, only the low 8 bits are used
+	- Instruction set:
+		0. NOP: No operation
+		1. IMM #regnum xxxx: Loads an immediate 16-bit value into a register
+		2. MOV #regtoreg: Copies the 16-bit value using #regtoreg as a source/destination
+		3. LDA #regnum: Loads 16 bits into A using #regnum as containing the address to load from
+		4. LDB #regnum: Loads 16 bits into B using #regnum as containing the address to load from
+		5. STA #regnum: Stores 16 bits from A into the address pointed to by #regnum
+		6. STB #regnum: Stores 16 bits from B into the address pointed to by #regnum
+		7. PUSH #regnum: Pushes the 16 bits from #regnum onto the stack (8-bit registers push a leading 00 byte) and adds 2 to SP
+		8. POP #regnum: Pops a 16-bit value into #regnum (8-bit registers drop the high byte) and subtracts 2 from SP
+		9-15. ADD, SUB, MUL, DIV, AND, OR, XOR: Takes the two topmost 16-bit stack values, performs the operation, and pushes the result (SP -= 2)
+		16. NOT: Takes the topmost 16-bit stack value, inverts it, and pushes the result
+		17. CMP: Compares the two topmost 16-bit stack values and sets FLAGS (SP -= 4)
+		18-23. JE, JNE, JLT, JGT, JLTE, JGTE xxxx: Conditional jumps to xxxx based on FLAGS
+		24-29. JE, JNE, JLT, JGT, JLTE, JGTE #regnum: Conditional jumps to the memory address in regnum based on FLAGS
+		30. WRITE xxxx: Writes a null-terminated ASCII string starting at address xxxx; if no 00 byte is found before the end of memory, all of memory is printed
+		31. WRITE #regnum: Same as WRITE xxxx, but uses #regnum as containing the address
+		32. READ xxxx: Reads a line from the console and writes it, plus a null byte, to xxxx
+		33. READ #regnum: Same as READ xxxx, but uses #regnum as containing the address
+	- Instructions represented by other instructions:
+		- IMM IP xxxx: Equivalent to an unconditional jump to xxxx
+		- MOV src IP: Equivalent to an unconditional jump to a memory address in a register
+		- IMM BANKNUM xxxx: Changes the ROM bank to the bank number specified by the bottom 4 bits of xxxx
+Execution Model:
+	- IP is initialized to 0x8000
+	- IP will loop around the 32 KB half of memory it is currently in; if it hits 0xFFFF, it loops back to 0x8000, if it hits 0x7FFF, it loops back to 0x0000
+	- IP can be switched to each half of memory at any time
+	- Executing a single instruction looks like this:
+		- Read the byte at IP
+		- Take it mod 33 and map it to an instruction above
+		- Read 0-3 more bytes for the operands and perform the operation
+		- Update IP only after everything is read
+	- Execution cannot encounter an error:
+		- All memory is always filled with something, even if that is 00 bytes
+		- Writes to RAM always work, writes to ROM don't change the underlying value
+		- SP is restricted to 0x0000 to 0x7FFF and wraps around
+		- Division by 0 produces 0xFFFF as a result
+Hello World Example:
+	07 65 48	PUSH 0x6548	// Push bytes of "Hello, world!\0"
+	07 6C 6C	PUSH 0x6C6C	
+	07 2C 6F	PUSH 0x2C6F	
+	07 77 20	PUSH 0x7720	
+	07 72 6F	PUSH 0x726F	
+	07 6C 72	PUSH 0x6C72	
+	07 21 64	PUSH 0x2164	
+	07 00 00	PUSH 0x0000
+	1F 00		WRITE A		// Write the string
+	02 28		MOV IP A	// Set up an infinite loop
+	02 05		MOV A IP	// Loop forever
+Project Architecture:
+	- Execution core: holds RAM, ROM, and the registers; executes instructions
+	- Disassembler: Given a block of memory, displays the instructions that make it up
+	- Frontend: TUI that displays console output, takes input, shows memory, registers, etc.
+Frontend View:
+
+(current address pointed to by SP has a different color in both memory views)
+(PIN MEMORY window only appears after F2 is pressed)
+
+             1         2         3         4         5         6         7         8
+   0123456789012345678901234567890123456789012345678901234567890123456789012345678901234
+0  +--------------------------------------+ +-----------------------------------------+
+1  |                PROGRAM               | |                  MEMORY                 |
+2  +--------------------------------------+ +-----------------------------------------+
+3  | => 0000 00 00 00 WRITE xxxx          | | 0000  00 00 00 00 00 00 00 00  ........ |
+4  |    0003 00       XOR                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+5  |    0004 00 00    MOV BANKNUM BANKNUM | | 0000  00 00 00 00 00 00 00 00  ........ |
+6  |    0005 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+7  |    0006 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+8  |    0007 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+9  |    0008 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+10 |    0009 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+11 |    000A 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+12 |    000B 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+13 +--------------------------------------+ +-----------------------------------------+
+14 
+15 +-----------------+ +--------------------------------------------------------------+
+16 |    REGISTERS    | |                            CONSOLE                           |
+17 +-----------------+ +--------------------------------------------------------------+
+18 |  A 0000  B 0000 | |                                                              |
+19 |  X 0000  Y 0000 | |                                                              |
+20 | SP 0000 IP 0000 | |                                                              |
+21 | BANK  0 FLAG 00 | |                                                              |
+22 +-----------------+ | Hello, world!                                                |
+23                     |                                                              |
+24 +---------------+   | Hi! My name is Celarix, what's yours                         |
+25 |   PIN MEMORY  |   | Name: JOHN SMITH                                             |
+26 +---------------+   | Hi, John, nice to meet you!                                  |
+27 |			   |   | This is a really really really really really long line!!!!!! |
+28 | Address 0000  |   +--------------------------------------------------------------+
+29 |			   |   |                                                              |
+30 +---------------+   +--------------------------------------------------------------+
+31 					
+32 F5 Animate F6 Pause F11 Step F2 Pin Memory F3 Unpin F4 Dump F12 Memview ^C Exit
