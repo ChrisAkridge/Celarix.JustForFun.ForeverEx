@@ -57,8 +57,11 @@ namespace Celarix.JustForFun.ForeverEx
         #endregion
 
         public event EventHandler<ConsoleOutputWrittenEventArgs> ConsoleOutputWritten;
+        public Func<string> getInput;
 
-        public ExecutionCore(string romImagePath, ROMMappingMode romMappingMode)
+        public ExecutionCore(string romImagePath,
+            ROMMappingMode romMappingMode,
+            Func<string> getInput)
         {
             this.romMappingMode = romMappingMode;
 
@@ -74,6 +77,7 @@ namespace Celarix.JustForFun.ForeverEx
 
             SwitchBank(0);
             ip = 0x8000;
+            this.getInput = getInput;
         }
 
         public void ExecuteSingleInstruction()
@@ -444,6 +448,43 @@ namespace Celarix.JustForFun.ForeverEx
                 WrittenOutput = new string(output.ToArray())
             });
 
+            ip = NextAddressForIP(regNumAddress);
+        }
+        
+        public void ReadToAddress()
+        {
+            var addressLowAddress = NextAddressForIP(ip);
+            var addressHighAddress = NextAddressForIP(addressLowAddress);
+            var addressLow = ReadByteAtAddress(addressLowAddress);
+            var addressHigh = ReadByteAtAddress(addressHighAddress);
+
+            var address = (ushort)((addressHigh << 8) | addressLow);
+            var input = getInput();
+
+            foreach (var c in input)
+            {
+                WriteByteAtAddress(address, (byte)c);
+                address += 1;
+            }
+
+            WriteByteAtAddress(address, 0x00);
+            ip = NextAddressForIP(addressHighAddress);
+        }
+
+        public void ReadToAddressInRegister()
+        {
+            var regNumAddress = NextAddressForIP(ip);
+            var regNum = ReadByteAtAddress(regNumAddress);
+            var address = GetRegister(regNum);
+            var input = getInput();
+
+            foreach (var c in input)
+            {
+                WriteByteAtAddress(address, (byte)c);
+                address += 1;
+            }
+
+            WriteByteAtAddress(address, 0x00);
             ip = NextAddressForIP(regNumAddress);
         }
         #endregion
