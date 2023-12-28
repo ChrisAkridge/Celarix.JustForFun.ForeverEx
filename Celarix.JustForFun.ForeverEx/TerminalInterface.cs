@@ -13,9 +13,10 @@ namespace Celarix.JustForFun.ForeverEx
     {
         private const int TerminalWidth = 86;
         private const int TerminalHeight = 33;
-        private const int MemoryViewerByteCount = 80;
+        public const int MemoryViewerByteCount = 80;
         private const int MemoryViewerByteCountPerLine = 8;
-        private const int DisassemblyLines = 10;
+        private const int BytesBeforeSPForDisplay = 24;
+        public const int DisassemblyLines = 10;
         private const int ConsoleLineLength = 60;
         private const int ConsoleOutputLines = 10;
 
@@ -125,6 +126,17 @@ namespace Celarix.JustForFun.ForeverEx
             {
                 sp = value;
                 DrawRegisters();
+
+                var rowAlignedSP = sp - (sp % MemoryViewerByteCountPerLine);
+                if (rowAlignedSP <= BytesBeforeSPForDisplay)
+                {
+                    memoryViewerStartAddress = 0;
+                }
+                else if (rowAlignedSP > BytesBeforeSPForDisplay)
+                {
+                    memoryViewerStartAddress = (ushort)(rowAlignedSP - BytesBeforeSPForDisplay);
+                }
+                DrawMemoryViewer();
             }
         }
 
@@ -160,10 +172,12 @@ namespace Celarix.JustForFun.ForeverEx
         #endregion
 
         public ushort? PinnedAddress => pinnedAddress;
+        public ushort MemoryViewerStartAddress => memoryViewerStartAddress;
 
-        public bool IsAnimating { get; set; }
+        public RunningState RunningState { get; set; }
         public bool IsAcceptingUserInput { get; set; }
-        public bool IsAwaitingKeyPress => IsAnimating && IsAcceptingUserInput;
+        public bool IsAwaitingKeyPress => pinningMemoryState == PinningMemoryState.WaitingForAddress || IsAcceptingUserInput;
+        public bool MemoryViewerOpen { get; set; }
 
         public TerminalInterface()
         {
@@ -177,16 +191,33 @@ namespace Celarix.JustForFun.ForeverEx
             Draw();
         }
 
-        public void OnKeyPress(ConsoleKeyInfo key)
+        public bool HandleKeyPressIfNeeded(ConsoleKeyInfo key)
         {
             if (pinningMemoryState == PinningMemoryState.WaitingForAddress)
             {
                 OnPinnedMemoryKeyPress(key);
+                return true;
             }
             else if (IsAcceptingUserInput)
             {
                 OnInputKeyPress(key);
+                return true;
             }
+
+            return false;
+        }
+
+        public void BeginPinMemory()
+        {
+            pinningMemoryState = PinningMemoryState.WaitingForAddress;
+            DrawPinMemory();
+        }
+
+        public void UnpinMemory()
+        {
+            pinningMemoryState = PinningMemoryState.NotPinned;
+            pinnedAddress = null;
+            DrawPinMemory();
         }
 
         private void OnInputKeyPress(ConsoleKeyInfo key)
@@ -367,7 +398,7 @@ namespace Celarix.JustForFun.ForeverEx
 
         public void SetDisassembly(DisassembledInstruction[] disassembly)
         {
-            if (disassembly.Length <= DisassemblyLines)
+            if (disassembly.Length > DisassemblyLines)
             {
                 throw new ArgumentException($"Disassembly must be no more than {DisassemblyLines} lines long.");
             }
@@ -466,7 +497,13 @@ namespace Celarix.JustForFun.ForeverEx
 
                 if (disassemblyBuffer[i] != null)
                 {
-                    Console.Write(GetInstructionString(disassemblyBuffer[i]));
+                    string disassembledInstruction = GetInstructionString(disassemblyBuffer[i]);
+                    if (disassembledInstruction.Length < ProgramWidth - 2)
+                    {
+                        disassembledInstruction += new string(' ', ProgramWidth - 2 - disassembledInstruction.Length);
+                    }
+
+                    Console.Write(disassembledInstruction);
                 }
                 else
                 {
@@ -481,13 +518,14 @@ namespace Celarix.JustForFun.ForeverEx
 
         private string GetInstructionString(DisassembledInstruction instruction)
         {
-            var currentInstructionString = instruction.IsCurrentInstruction ? "=>" : "  ";
+            var currentInstructionString = instruction.IsCurrentInstruction ? ">" : " ";
             var addressString = instruction.Address.ToString("X4");
             var opcodeString = instruction.Opcode.ToString("X2");
             var operandByte1String = instruction.OperandByte1.HasValue ? instruction.OperandByte1.Value.ToString("X2") : "  ";
             var operandByte2String = instruction.OperandByte2.HasValue ? instruction.OperandByte2.Value.ToString("X2") : "  ";
+            var operandByte3String = instruction.OperandByte3.HasValue ? instruction.OperandByte3.Value.ToString("X2") : "  ";
 
-            return $"{currentInstructionString} {addressString} {opcodeString} {operandByte1String} {operandByte2String} {instruction.Mnemonic}";
+            return $"{currentInstructionString} {addressString} {opcodeString} {operandByte1String} {operandByte2String} {operandByte3String} {instruction.Mnemonic}";
         }
 
         private void DrawMemoryViewer()
@@ -588,12 +626,26 @@ namespace Celarix.JustForFun.ForeverEx
                     {
                         Console.Write(new string(' ', ConsoleLineLength));
                     }
-                    else if (currentLine.Length < ConsoleLineLength)
+                    else
                     {
-                        currentLine += new string(' ', ConsoleLineLength - currentLine.Length);
+                        if (currentLine.Length < ConsoleLineLength)
+                        {
+                            currentLine += new string(' ', ConsoleLineLength - currentLine.Length);
+                        }
+
+                        foreach (char c in currentLine)
+                        {
+                            if (c >= ' ' && c <= '~')
+                            {
+                                Console.Write(c);
+                            }
+                            else
+                            {
+                                Console.Write('.');
+                            }
+                        }
                     }
 
-                    Console.Write(currentLine);
                     Console.Write(" " + VerticalBorder);
                 }
             }
@@ -655,21 +707,33 @@ namespace Celarix.JustForFun.ForeverEx
         {
             Console.SetCursorPosition(CommandRowX, CommandRowY);
 
-            var commands = IsAnimating
-                ? new Dictionary<string, string>
+            Dictionary<string, string>? commands;
+            if (RunningState == RunningState.Paused)
+            {
+                commands = new Dictionary<string, string>
                 {
                     { "F5", "Animate" },
-                    { "F11", "Step" },
+                    { "F10", "Step" },
                     { "F2", "Pin Memory" },
                     { "F3", "Unpin" },
                     { "F4", "Dump" },
                     { "F12", "Memview" },
                     { "^C", "Exit" }
-                }
-                : new Dictionary<string, string>
-                {
-                    { "F6", "Pause" }
                 };
+            }
+            else
+            {
+                commands = new Dictionary<string, string>
+                {
+                    { "F6", "Pause" },
+                    { "F7", "Execute NOP Slide" }
+                };
+
+                if (MemoryViewerOpen)
+                {
+                    commands.Add("F8", "Run");
+                }
+            }
 
             foreach (var command in commands)
             {

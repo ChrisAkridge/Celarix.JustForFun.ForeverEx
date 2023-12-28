@@ -25,7 +25,9 @@ namespace Celarix.JustForFun.ForeverEx
         private long romBankOffset;
         #endregion
 
-        private const int InstructionCount = 33;
+        public const int InstructionCount = 36;
+        private const int RandomSeed = 0x12345678;
+        private const int ExecutedConsecutiveNOPsToTriggerNOPSlideExectuor = 16;
 
         #region Registers
         private ushort a;
@@ -48,7 +50,7 @@ namespace Celarix.JustForFun.ForeverEx
 
         private byte flags;
 
-        private bool Equals => (flags & 7) == 1;
+        private new bool Equals => (flags & 7) == 1;
         private bool LessThan => (flags & 7) == 4;
         private bool GreaterThan => (flags & 7) == 2;
         private bool LessThanOrEqualTo => (flags & 7) == 5;
@@ -56,12 +58,36 @@ namespace Celarix.JustForFun.ForeverEx
         private bool NotEquals => (flags & 7) == 0;
         #endregion
 
+        public bool MemoryViewerOpen { get; set; }
+        public event EventHandler<ROMBankSwitchEventArgs> ROMBankSwitched;
+        public event EventHandler<MemoryAddressChangedEventArgs> MemoryAddressChanged;
+        public event EventHandler<MemoryRangeChangedEventArgs> MemoryRangeChanged;
+
         public event EventHandler<ConsoleOutputWrittenEventArgs> ConsoleOutputWritten;
-        public Func<string> getInput;
+        private bool waitingForInput;
+        private ushort? inputDestinationAddress;
+        private bool skipReads;
+        private Random random = new Random(RandomSeed);
+        private int consecutiveNOPsExecuted = 0;
+        
+        public string? LastConsoleInput { get; set; }
+
+        #region Display Properties
+        public ushort A => a;
+        public ushort B => b;
+        public ushort X => x;
+        public ushort Y => y;
+        public ushort SP => sp;
+        public ushort IP => ip;
+        public byte Bank => BankNum;
+        public byte Flags => flags;
+
+        public bool WaitingForInput { get => waitingForInput; private set => waitingForInput = value; }
+        #endregion
 
         public ExecutionCore(string romImagePath,
             ROMMappingMode romMappingMode,
-            Func<string> getInput)
+            bool skipReads)
         {
             this.romMappingMode = romMappingMode;
 
@@ -77,16 +103,170 @@ namespace Celarix.JustForFun.ForeverEx
 
             SwitchBank(0);
             ip = 0x8000;
-            this.getInput = getInput;
+            this.skipReads = skipReads;
         }
 
         public void ExecuteSingleInstruction()
         {
+            if (WaitingForInput)
+            {
+                if (LastConsoleInput == null)
+                {
+                    throw new InvalidOperationException("No console input was provided.");
+                }
+
+                if (!inputDestinationAddress.HasValue)
+                {
+                    throw new InvalidOperationException("No input destination address was provided.");
+                }
+
+                var currentAddress = inputDestinationAddress.Value;
+                foreach (var c in LastConsoleInput)
+                {
+                    WriteByteAtAddress(currentAddress, (byte)c, suppressEvent: true);
+                    currentAddress++;
+                }
+
+                WriteByteAtAddress(currentAddress, 0, suppressEvent: true);
+
+                var writtenLength = currentAddress - inputDestinationAddress.Value;
+                MemoryRangeChanged?.Invoke(this, new MemoryRangeChangedEventArgs(inputDestinationAddress.Value, writtenLength));
+
+                LastConsoleInput = null;
+                inputDestinationAddress = null;
+                WaitingForInput = false;
+            }
+
             var opcode = ReadByteAtAddress(ip) % InstructionCount;
+            if (opcode == 0)
+            {
+                NoOperation();
+            }
+            else if (opcode == 1)
+            {
+                LoadImmediate();
+            }
+            else if (opcode == 2)
+            {
+                MoveRegisterValue();
+            }
+            else if (opcode == 3)
+            {
+                LoadA();
+            }
+            else if (opcode == 4)
+            {
+                LoadB();
+            }
+            else if (opcode == 5)
+            {
+                StoreA();
+            }
+            else if (opcode == 6)
+            {
+                StoreB();
+            }
+            else if (opcode == 7)
+            {
+                PushToStack();
+            }
+            else if (opcode == 8)
+            {
+                PopFromStack();
+            }
+            else if (opcode is >= 9 and <= 15)
+            {
+                MathOperation(opcode switch
+                {
+                    9 => MathOperationKind.Add,
+                    10 => MathOperationKind.Subtract,
+                    11 => MathOperationKind.Multiply,
+                    12 => MathOperationKind.Divide,
+                    13 => MathOperationKind.BitwiseAnd,
+                    14 => MathOperationKind.BitwiseOr,
+                    15 => MathOperationKind.BitwiseXor,
+                    _ => throw new InvalidOperationException("This should never happen.")
+                });
+            }
+            else if (opcode == 16)
+            {
+                BitwiseNOT();
+            }
+            else if (opcode == 17)
+            {
+                Compare();
+            }
+            else if (opcode is >= 18 and <= 23)
+            {
+                JumpToAddress(opcode switch
+                {
+                    18 => JumpKind.Equal,
+                    19 => JumpKind.NotEqual,
+                    20 => JumpKind.LessThan,
+                    21 => JumpKind.GreaterThan,
+                    22 => JumpKind.LessThanOrEqualTo,
+                    23 => JumpKind.GreaterThanOrEqualTo,
+                    _ => throw new InvalidOperationException("This should never happen.")
+                });
+            }
+            else if (opcode is >= 24 and <= 29)
+            {
+                JumpToAddressInRegister(opcode switch
+                {
+                    24 => JumpKind.Equal,
+                    25 => JumpKind.NotEqual,
+                    26 => JumpKind.LessThan,
+                    27 => JumpKind.GreaterThan,
+                    28 => JumpKind.LessThanOrEqualTo,
+                    29 => JumpKind.GreaterThanOrEqualTo,
+                    _ => throw new InvalidOperationException("This should never happen.")
+                });
+            }
+            else if (opcode == 30)
+            {
+                WriteFromAddress();
+            }
+            else if (opcode == 31)
+            {
+                WriteFromAddressInRegister();
+            }
+            else if (opcode == 32)
+            {
+                ReadToAddress();
+            }
+            else if (opcode == 33)
+            {
+                ReadToAddressInRegister();
+            }
+            else if (opcode == 34)
+            {
+                AddToRegister();
+            }
+            else if (opcode == 35)
+            {
+                SubtractFromRegister();
+            }
+            else
+            {
+                throw new InvalidOperationException("This should never happen.");
+            }
         }
 
+        public void ExecuteNOPSlide()
+        {
+            while (ReadByteAtAddress(ip) == 0)
+            {
+                ExecuteSingleInstruction();
+            }
+        }
+
+        // TODO: fix disassembler
+        // TODO: add constant run mode with ManualResetEvent
+        // TODO: lift the image drawing code into its own class and add a mode that has it output memory updates as PNGs
         private void SwitchBank(int bankNumber)
         {
+            bankNumber &= 0xF;
+
             if (romMappingMode == ROMMappingMode.Mapped16)
             {
                 Array.Copy(completeROM, bankNumber * ROMBankSize, currentROMBank, 0, ROMBankSize);
@@ -94,20 +274,6 @@ namespace Celarix.JustForFun.ForeverEx
             else
             {
                 romBankOffset = bankNumber * ROMBankSize;
-                romImage.Seek(romBankOffset, SeekOrigin.Begin);
-                romImage.Read(currentROMBank, 0, ROMBankSize);
-            }
-        }
-
-        private void PreviousBank()
-        {
-            if (romMappingMode == ROMMappingMode.Mapped16)
-            {
-                SwitchBank(BankNum == 0 ? 15 : BankNum - 1);
-            }
-            else
-            {
-                romBankOffset -= ROMBankSize;
                 romImage.Seek(romBankOffset, SeekOrigin.Begin);
                 romImage.Read(currentROMBank, 0, ROMBankSize);
             }
@@ -123,38 +289,62 @@ namespace Celarix.JustForFun.ForeverEx
             {
                 romBankOffset += ROMBankSize;
                 romImage.Seek(romBankOffset, SeekOrigin.Begin);
-                romImage.Read(currentROMBank, 0, ROMBankSize);
+                int bytesRead = romImage.Read(currentROMBank, 0, ROMBankSize);
+                if (bytesRead == 0)
+                {
+                    SwitchBank(0);
+                }
+            }
+
+            if (MemoryViewerOpen)
+            {
+                ROMBankSwitched?.Invoke(this, new ROMBankSwitchEventArgs());
             }
         }
 
         private byte ReadByteAtAddress(ushort address) =>
             address < 0x8000 ? ram[address] : currentROMBank[address - 0x8000];
 
-        private void WriteByteAtAddress(ushort address, byte value)
+        private void WriteByteAtAddress(ushort address,
+            byte value,
+            bool suppressEvent = false)
         {
-            if (address < 0x8000)
-            {
-                ram[address] = value;
-            }
+            if (address >= 0x8000) { return; }
 
-            // Permit "writes" to ROM that don't actually do anything
+            var oldValue = ram[address];
+            ram[address] = value;
+
+            if (MemoryViewerOpen && oldValue != value && !suppressEvent)
+            {
+                MemoryAddressChanged?.Invoke(this, new MemoryAddressChangedEventArgs(address, value));
+            }
         }
 
         private void SetRegister(int registerNumber, ushort value)
         {
+            registerNumber &= 0b111;
+
             if (registerNumber == 0) { a = value; }
             else if (registerNumber == 1) { b = value; }
             else if (registerNumber == 2) { x = value; }
             else if (registerNumber == 3) { y = value; }
             else if (registerNumber == 4) { sp = value; }
-            else if (registerNumber == 5) { ip = value; }
+            else if (registerNumber == 5)
+            {
+                if (random.NextDouble() < 0.99d)
+                {
+                    // Helps us from getting stuck in a loop
+                    // Should be kinda deterministic because we seed the RNG with a constant
+                    ip = value;
+                }
+            }
             else if (registerNumber == 6) { BankNum = (byte)value; }
             else if (registerNumber == 7) { flags = (byte)value; }
             else { throw new ArgumentOutOfRangeException(nameof(registerNumber)); }
         }
 
         public ushort GetRegister(int registerNumber) =>
-            registerNumber switch
+            (registerNumber & 0b111) switch
             {
                 0 => a,
                 1 => b,
@@ -167,22 +357,20 @@ namespace Celarix.JustForFun.ForeverEx
                 _ => throw new ArgumentOutOfRangeException(nameof(registerNumber))
             };
 
-        private ushort NextAddressForSP(ushort address) =>
+        private static ushort NextAddressForSP(ushort address) =>
             // SP is restricted to 0x0000 to 0x7FFF
             address == 0x7FFF ? (ushort)0x0000 : (ushort)(address + 1);
 
-        private ushort PreviousAddressForSP(ushort address) =>
+        private static ushort PreviousAddressForSP(ushort address) =>
             // SP is restricted to 0x0000 to 0x7FFF
             address == 0x0000 ? (ushort)0x7FFF : (ushort)(address - 1);
 
         private ushort NextAddressForIP(ushort address)
         {
-            // When just incrementing IP, it stays in the half of the address space it's in
-            if (address == 0x7FFF)
-            {
-                return 0;
-            }
-            else if (address == 0xFFFF)
+            // When incrementing IP, it wraps around to 0x8000 when it reaches 0xFFFF
+            // but it just increments past 0x7FFF. This prevents execution from getting
+            // stuck in a blank or mostly-blank RAM.
+            if (address == 0xFFFF)
             {
                 if (romMappingMode == ROMMappingMode.OverflowShifting)
                 {
@@ -193,8 +381,35 @@ namespace Celarix.JustForFun.ForeverEx
             return (ushort)(address + 1);
         }
 
+        public void FillBufferFromMemory(ushort address, byte[] buffer, int count, int start)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                var sourceIndex = address + i;
+                var destinationIndex = start + i;
+                if (destinationIndex >= buffer.Length)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(start));
+                }
+
+                buffer[destinationIndex] = sourceIndex <= 0x7FFF
+                    ? ram[sourceIndex]
+                    : currentROMBank[sourceIndex - 0x8000];
+            }
+        }
+
         #region Instructions
-        public void NoOperation() => ip = NextAddressForIP(ip);
+        public void NoOperation()
+        {
+            ip = NextAddressForIP(ip);
+            consecutiveNOPsExecuted += 1;
+
+            if (consecutiveNOPsExecuted == ExecutedConsecutiveNOPsToTriggerNOPSlideExectuor)
+            {
+                ExecuteNOPSlide();
+                consecutiveNOPsExecuted = 0;
+            }
+        }
 
         public void LoadImmediate()
         {
@@ -204,7 +419,7 @@ namespace Celarix.JustForFun.ForeverEx
             ushort valueLowAddress = NextAddressForIP(registerNumberAddress);
             var valueLow = ReadByteAtAddress(valueLowAddress);
 
-            ushort valueHighAddress = NextAddressForIP(registerNumberAddress);
+            ushort valueHighAddress = NextAddressForIP(valueLowAddress);
             var valueHigh = ReadByteAtAddress(valueHighAddress);
 
             ushort immediate = (ushort)((valueHigh << 8) | valueLow);
@@ -268,6 +483,7 @@ namespace Celarix.JustForFun.ForeverEx
             WriteByteAtAddress(sp, (byte)(registerValue & 0xFF));
             WriteByteAtAddress(NextAddressForSP(sp), (byte)((registerValue & 0xFF00) >> 8));
             ip = NextAddressForIP(regNumAddress);
+            sp = NextAddressForSP(NextAddressForSP(sp));
         }
 
         public void PopFromStack()
@@ -382,6 +598,8 @@ namespace Celarix.JustForFun.ForeverEx
                 _ => throw new ArgumentOutOfRangeException(nameof(kind))
             };
 
+            shouldJump = random.NextDouble() >= 0.99d && shouldJump;
+
             ip = shouldJump ? (ushort)((addressHigh << 8) | addressLow) : NextAddressForIP(addressHighAddress);
         }
 
@@ -401,6 +619,8 @@ namespace Celarix.JustForFun.ForeverEx
                 JumpKind.LessThanOrEqualTo => LessThanOrEqualTo,
                 _ => throw new ArgumentOutOfRangeException(nameof(kind))
             };
+
+            shouldJump = random.NextDouble() >= 0.99d && shouldJump;
 
             ip = shouldJump ? address : NextAddressForIP(regNumAddress);
         }
@@ -459,16 +679,18 @@ namespace Celarix.JustForFun.ForeverEx
             var addressHigh = ReadByteAtAddress(addressHighAddress);
 
             var address = (ushort)((addressHigh << 8) | addressLow);
-            var input = getInput();
-
-            foreach (var c in input)
-            {
-                WriteByteAtAddress(address, (byte)c);
-                address += 1;
-            }
-
-            WriteByteAtAddress(address, 0x00);
             ip = NextAddressForIP(addressHighAddress);
+
+            WaitingForInput = true;
+            inputDestinationAddress = address;
+
+            if (skipReads)
+            {
+                // Allow the program to continue without waiting for input
+                LastConsoleInput = random.NextDouble() > 0.5
+                    ? "My hovercraft is full of eels"
+                    : "There's a horse in aisle five";
+            }
         }
 
         public void ReadToAddressInRegister()
@@ -476,16 +698,44 @@ namespace Celarix.JustForFun.ForeverEx
             var regNumAddress = NextAddressForIP(ip);
             var regNum = ReadByteAtAddress(regNumAddress);
             var address = GetRegister(regNum);
-            var input = getInput();
-
-            foreach (var c in input)
-            {
-                WriteByteAtAddress(address, (byte)c);
-                address += 1;
-            }
-
-            WriteByteAtAddress(address, 0x00);
             ip = NextAddressForIP(regNumAddress);
+
+            WaitingForInput = true;
+            inputDestinationAddress = address;
+
+            if (skipReads)
+            {
+                // Allow the program to continue without waiting for input
+                LastConsoleInput = random.NextDouble() > 0.5
+                    ? "My hovercraft is full of eels"
+                    : "There's a horse in aisle five";
+            }
+        }
+
+        public void AddToRegister()
+        {
+            var regNumAddress = NextAddressForIP(ip);
+            var regNum = ReadByteAtAddress(regNumAddress);
+            var reg = GetRegister(regNum);
+            var operandHighAddress = NextAddressForIP(regNumAddress);
+            var operandLowAddress = NextAddressForIP(operandHighAddress);
+            var operand = (ushort)((ReadByteAtAddress(operandHighAddress) << 8) | ReadByteAtAddress(operandLowAddress));
+            var result = (ushort)(reg + operand);
+            SetRegister(regNum, result);
+            ip = NextAddressForIP(operandLowAddress);
+        }
+
+        public void SubtractFromRegister()
+        {
+            var regNumAddress = NextAddressForIP(ip);
+            var regNum = ReadByteAtAddress(regNumAddress);
+            var reg = GetRegister(regNum);
+            var operandHighAddress = NextAddressForIP(regNumAddress);
+            var operandLowAddress = NextAddressForIP(operandHighAddress);
+            var operand = (ushort)((ReadByteAtAddress(operandHighAddress) << 8) | ReadByteAtAddress(operandLowAddress));
+            var result = (ushort)(reg - operand);
+            SetRegister(regNum, result);
+            ip = NextAddressForIP(operandLowAddress);
         }
         #endregion
     }

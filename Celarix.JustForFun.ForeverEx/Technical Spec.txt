@@ -52,6 +52,8 @@ Instruction Format:
 		31. WRITE #regnum: Same as WRITE xxxx, but uses #regnum as containing the address
 		32. READ xxxx: Reads a line from the console and writes it, plus a null byte, to xxxx
 		33. READ #regnum: Same as READ xxxx, but uses #regnum as containing the address
+		34. ADD #regnum xxxx: Adds xxxx to the value in #regnum
+		35. SUB #regnum xxxx: Subtracts xxxx from the value in #regnum
 	- Instructions represented by other instructions:
 		- IMM IP xxxx: Equivalent to an unconditional jump to xxxx
 		- MOV src IP: Equivalent to an unconditional jump to a memory address in a register
@@ -96,16 +98,16 @@ Frontend View:
 0  +--------------------------------------+ +-----------------------------------------+
 1  |                PROGRAM               | |                  MEMORY                 |
 2  +--------------------------------------+ +-----------------------------------------+
-3  | => 0000 00 00 00 WRITE xxxx          | | 0000  00 00 00 00 00 00 00 00  ........ |
-4  |    0003 00       XOR                 | | 0000  00 00 00 00 00 00 00 00  ........ |
-5  |    0004 00 00    MOV BANKNUM BANKNUM | | 0000  00 00 00 00 00 00 00 00  ........ |
-6  |    0005 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
-7  |    0006 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
-8  |    0007 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
-9  |    0008 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
-10 |    0009 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
-11 |    000A 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
-12 |    000B 00       NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+3  |>0000 00 00 00    WRITE xxxx          | | 0000  00 00 00 00 00 00 00 00  ........ |
+4  | 0003 00          XOR                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+5  | 0004 00 00 00 00 MOV BANKNUM BANKNUM | | 0000  00 00 00 00 00 00 00 00  ........ |
+6  | 0005 00          (out of range)      | | 0000  00 00 00 00 00 00 00 00  ........ |
+7  | 0006 00          NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+8  | 0007 00          NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+9  | 0008 00          NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+10 | 0009 00          NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+11 | 000A 00          NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
+12 | 000B 00          NOP                 | | 0000  00 00 00 00 00 00 00 00  ........ |
 13 +--------------------------------------+ +-----------------------------------------+
 14 
 15 +-----------------+ +--------------------------------------------------------------+

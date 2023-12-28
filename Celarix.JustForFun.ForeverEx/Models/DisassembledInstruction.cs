@@ -13,6 +13,7 @@ namespace Celarix.JustForFun.ForeverEx.Models
         public byte Opcode { get; set; }
         public byte? OperandByte1 { get; set; }
         public byte? OperandByte2 { get; set; }
+        public byte? OperandByte3 { get; set; }
         public string Mnemonic { get; set; }
     }
 }

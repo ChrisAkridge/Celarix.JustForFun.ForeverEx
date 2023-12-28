@@ -13,6 +13,13 @@ namespace Celarix.JustForFun.ForeverEx
         Pinned
     }
 
+    internal enum RunningState
+    {
+        Paused,
+        Animating,
+        Running
+    }
+
     internal enum ROMMappingMode
     {
         Mapped16,
@@ -38,5 +45,13 @@ namespace Celarix.JustForFun.ForeverEx
         GreaterThan,
         LessThanOrEqualTo,
         GreaterThanOrEqualTo,
+    }
+
+    internal enum OperandKind
+    {
+        NotPresent,
+        ImmediateOrAddress,
+        Register,
+        RegisterToRegister
     }
 }
