@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 namespace Celarix.JustForFun.ForeverExMemoryView
 {
     // https://stackoverflow.com/a/34801225/2709212
-    internal sealed class DirectBitmap : IDisposable
+    public sealed class DirectBitmap : IDisposable
     {
         public Bitmap Bitmap { get; private set; }
         public int[] Bits { get; private set; }
@@ -40,6 +40,11 @@ namespace Celarix.JustForFun.ForeverExMemoryView
             int index = x + (y * Width);
             int col = Bits[index];
             return Color.FromArgb(col);
+        }
+
+        public void SaveAsPNG(string outputFilePath)
+        {
+            Bitmap.Save(outputFilePath, ImageFormat.Png);
         }
 
         public void Dispose()

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Celarix.JustForFun.ForeverEx.Models;
+using Celarix.JustForFun.ForeverEx.Models.MemoryHistory;
 
 namespace Celarix.JustForFun.ForeverEx
 {
@@ -58,19 +59,21 @@ namespace Celarix.JustForFun.ForeverEx
         private bool NotEquals => (flags & 7) == 0;
         #endregion
 
-        public bool MemoryViewerOpen { get; set; }
         public event EventHandler<ROMBankSwitchEventArgs> ROMBankSwitched;
         public event EventHandler<MemoryAddressChangedEventArgs> MemoryAddressChanged;
         public event EventHandler<MemoryRangeChangedEventArgs> MemoryRangeChanged;
-
         public event EventHandler<ConsoleOutputWrittenEventArgs> ConsoleOutputWritten;
+
         private bool waitingForInput;
         private ushort? inputDestinationAddress;
-        private bool skipReads;
-        private Random random = new Random(RandomSeed);
+        private readonly bool skipReads;
+        private readonly Random random = new Random(RandomSeed);
         private int consecutiveNOPsExecuted = 0;
-        
+
+        public bool MemoryViewerOpen { get; set; }
         public string? LastConsoleInput { get; set; }
+
+        public MemoryHistoryWatcher? MemoryHistoryWatcher { get; set; }
 
         #region Display Properties
         public ushort A => a;
@@ -87,7 +90,8 @@ namespace Celarix.JustForFun.ForeverEx
 
         public ExecutionCore(string romImagePath,
             ROMMappingMode romMappingMode,
-            bool skipReads)
+            bool skipReads,
+            MemoryHistoryWatcher? memoryHistoryWatcher)
         {
             this.romMappingMode = romMappingMode;
 
@@ -101,6 +105,7 @@ namespace Celarix.JustForFun.ForeverEx
                 romImage = File.OpenRead(romImagePath);
             }
 
+            MemoryHistoryWatcher = memoryHistoryWatcher;
             SwitchBank(0);
             ip = 0x8000;
             this.skipReads = skipReads;
@@ -110,31 +115,7 @@ namespace Celarix.JustForFun.ForeverEx
         {
             if (WaitingForInput)
             {
-                if (LastConsoleInput == null)
-                {
-                    throw new InvalidOperationException("No console input was provided.");
-                }
-
-                if (!inputDestinationAddress.HasValue)
-                {
-                    throw new InvalidOperationException("No input destination address was provided.");
-                }
-
-                var currentAddress = inputDestinationAddress.Value;
-                foreach (var c in LastConsoleInput)
-                {
-                    WriteByteAtAddress(currentAddress, (byte)c, suppressEvent: true);
-                    currentAddress++;
-                }
-
-                WriteByteAtAddress(currentAddress, 0, suppressEvent: true);
-
-                var writtenLength = currentAddress - inputDestinationAddress.Value;
-                MemoryRangeChanged?.Invoke(this, new MemoryRangeChangedEventArgs(inputDestinationAddress.Value, writtenLength));
-
-                LastConsoleInput = null;
-                inputDestinationAddress = null;
-                WaitingForInput = false;
+                CheckForInput();
             }
 
             var opcode = ReadByteAtAddress(ip) % InstructionCount;
@@ -252,6 +233,37 @@ namespace Celarix.JustForFun.ForeverEx
             }
         }
 
+        private void CheckForInput()
+        {
+            if (LastConsoleInput == null)
+            {
+                throw new InvalidOperationException("No console input was provided.");
+            }
+
+            if (!inputDestinationAddress.HasValue)
+            {
+                throw new InvalidOperationException("No input destination address was provided.");
+            }
+
+            var currentAddress = inputDestinationAddress.Value;
+            var bytesToWrite = Encoding.ASCII.GetBytes(LastConsoleInput);
+            foreach (var c in bytesToWrite)
+            {
+                WriteByteAtAddress(currentAddress, (byte)c, suppressEvent: true);
+                currentAddress++;
+            }
+
+            WriteByteAtAddress(currentAddress, 0, suppressEvent: true);
+
+            var writtenLength = currentAddress - inputDestinationAddress.Value;
+            MemoryRangeChanged?.Invoke(this, new MemoryRangeChangedEventArgs(inputDestinationAddress.Value, writtenLength));
+            MemoryHistoryWatcher?.WriteEvent(new MemoryRangeChanged(inputDestinationAddress.Value, bytesToWrite));
+
+            LastConsoleInput = null;
+            inputDestinationAddress = null;
+            WaitingForInput = false;
+        }
+
         public void ExecuteNOPSlide()
         {
             while (ReadByteAtAddress(ip) == 0)
@@ -276,6 +288,13 @@ namespace Celarix.JustForFun.ForeverEx
                 romBankOffset = bankNumber * ROMBankSize;
                 romImage.Seek(romBankOffset, SeekOrigin.Begin);
                 romImage.Read(currentROMBank, 0, ROMBankSize);
+            }
+
+            if (MemoryHistoryWatcher != null)
+            {
+                var eventBuffer = new byte[ROMBankSize];
+                FillBufferFromMemory(0x8000, eventBuffer, 0x8000, 0);
+                MemoryHistoryWatcher.WriteEvent(new ROMBankSwitched(eventBuffer));
             }
         }
 
@@ -317,6 +336,7 @@ namespace Celarix.JustForFun.ForeverEx
             if (MemoryViewerOpen && oldValue != value && !suppressEvent)
             {
                 MemoryAddressChanged?.Invoke(this, new MemoryAddressChangedEventArgs(address, value));
+                MemoryHistoryWatcher?.WriteEvent(new SingleByteChanged(address, value));
             }
         }
 
@@ -335,6 +355,7 @@ namespace Celarix.JustForFun.ForeverEx
                 {
                     // Helps us from getting stuck in a loop
                     // Should be kinda deterministic because we seed the RNG with a constant
+                    // Also this makes this architecture non-Turing-complete because no program ever halts
                     ip = value;
                 }
             }

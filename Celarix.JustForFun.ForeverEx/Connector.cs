@@ -15,6 +15,7 @@ namespace Celarix.JustForFun.ForeverEx
         private readonly TerminalInterface terminal;
 
         private MainForm? memoryViewerForm;
+        private MemoryHistoryWatcher? memoryHistoryWatcher;
 
         private readonly byte[] memoryBuffer = new byte[TerminalInterface.MemoryViewerByteCount];
         private readonly DisassembledInstruction[] disassemblyBuffer = new DisassembledInstruction[TerminalInterface.DisassemblyLines];
@@ -22,9 +23,14 @@ namespace Celarix.JustForFun.ForeverEx
 
         private int runModeInstructionCount = 0;
 
-        public Connector(ROMMappingMode mappingMode, string romImagePath, bool skipReads)
+        public Connector(ROMMappingMode mappingMode, string romImagePath, bool skipReads, string? dumpMemoryPath)
         {
-            core = new ExecutionCore(romImagePath, mappingMode, skipReads);
+            if (dumpMemoryPath != null)
+            {
+                memoryHistoryWatcher = new MemoryHistoryWatcher(Path.Combine(dumpMemoryPath, "memory.bin"));
+            }
+
+            core = new ExecutionCore(romImagePath, mappingMode, skipReads, memoryHistoryWatcher);
             terminal = new TerminalInterface();
             UpdateTerminal();
 
@@ -42,7 +48,7 @@ namespace Celarix.JustForFun.ForeverEx
         {
             if (terminal.RunningState == RunningState.Animating)
             {
-                return AnimationLoop();
+                return AnimateLoop();
             }
             else if (terminal.RunningState == RunningState.Running)
             {
@@ -78,10 +84,6 @@ namespace Celarix.JustForFun.ForeverEx
             {
                 terminal.UnpinMemory();
             }
-            else if (key.Key == ConsoleKey.F4)
-            {
-                // Dump memory
-            }
             else if (key.Key == ConsoleKey.F12)
             {
                 if (memoryViewerForm != null)
@@ -90,47 +92,27 @@ namespace Celarix.JustForFun.ForeverEx
                 }
                 else
                 {
-                    var ramBuffer = new byte[32768];
-                    core.FillBufferFromMemory(0, ramBuffer, ramBuffer.Length, 0);
-                    var romBankBuffer = new byte[32768];
-                    core.FillBufferFromMemory(0x8000, romBankBuffer, romBankBuffer.Length, 0);
-
-                    Task.Run(() =>
-                    {
-                        Application.EnableVisualStyles();
-                        Application.SetCompatibleTextRenderingDefault(false);
-
-                        memoryViewerForm = new MainForm(ramBuffer, romBankBuffer, core.SP, core.IP);
-
-                        memoryViewerForm!.FormClosedByUser += (sender, args) =>
-                        {
-                            core.MemoryViewerOpen = false;
-                            core.MemoryAddressChanged -= Core_MemoryAddressChanged;
-                            core.ROMBankSwitched -= Core_ROMBankSwitched;
-                            core.MemoryRangeChanged -= Core_MemoryRangeChanged;
-                            terminal.MemoryViewerOpen = false;
-                            memoryViewerForm = null;
-                        };
-
-                        Application.Run(memoryViewerForm);
-                    });
-
-                    core.MemoryViewerOpen = true;
-                    core.MemoryAddressChanged += Core_MemoryAddressChanged;
-                    core.ROMBankSwitched += Core_ROMBankSwitched;
-                    core.MemoryRangeChanged += Core_MemoryRangeChanged;
-                    terminal.MemoryViewerOpen = true;
+                    OpenMemoryViewerForm();
                 }
             }
-            else if (key.Key == ConsoleKey.C && key.Modifiers.HasFlag(ConsoleModifiers.Control))
+            else if (key.Key == ConsoleKey.D && key.Modifiers.HasFlag(ConsoleModifiers.Control))
             {
+                if (memoryHistoryWatcher != null)
+                {
+                    Console.Clear();
+                    Console.SetCursorPosition(0, 0);
+
+                    memoryHistoryWatcher.Dispose();
+                    HistoryFrameBuilder.BuildFramesFromMemoryHistory(memoryHistoryWatcher.OutputFilePath, Path.GetDirectoryName(memoryHistoryWatcher.OutputFilePath)!);
+                }
+
                 return false;
             }
 
             return true;
         }
 
-        private bool AnimationLoop()
+        private bool AnimateLoop()
         {
             core.ExecuteSingleInstruction();
 
@@ -158,10 +140,15 @@ namespace Celarix.JustForFun.ForeverEx
                     UpdateTerminal();
                     UpdateMemoryViewerPointers();
                 }
-                else if (animateKey.Key == ConsoleKey.F8 && memoryViewerForm != null)
+                else if (animateKey.Key == ConsoleKey.F8)
                 {
                     terminal.RunningState = RunningState.Running;
-                    memoryViewerForm.WillWaitForRepaint = true;
+                    Console.Clear();
+                    Console.SetCursorPosition(0, 0);
+                    if (memoryViewerForm != null)
+                    {
+                        memoryViewerForm.WillWaitForRepaint = true;
+                    }
                 }
             }
             return true;
@@ -173,14 +160,24 @@ namespace Celarix.JustForFun.ForeverEx
             UpdateMemoryViewerPointers();
             runModeInstructionCount += 1;
 
-            if (runModeInstructionCount % 100 == 0 && Console.KeyAvailable)
+            if (runModeInstructionCount % 100 == 0)
             {
-                var runKey = Console.ReadKey(intercept: true);
-                if (runKey.Key == ConsoleKey.F6)
+                UpdateTerminal();
+
+                if (Console.KeyAvailable)
                 {
-                    terminal.RunningState = RunningState.Paused;
-                    memoryViewerForm!.WillWaitForRepaint = false;
-                    UpdateTerminal();
+                    var runKey = Console.ReadKey(intercept: true);
+                    if (runKey.Key == ConsoleKey.F6)
+                    {
+                        terminal.RunningState = RunningState.Paused;
+                        if (memoryViewerForm != null)
+                        {
+                            memoryViewerForm.WillWaitForRepaint = false;
+                        }
+                        UpdateTerminal();
+                        UpdateMemoryViewerPointers();
+                        runModeInstructionCount = 0;
+                    }
                 }
             }
 
@@ -199,7 +196,6 @@ namespace Celarix.JustForFun.ForeverEx
 
         private void Core_MemoryRangeChanged(object? sender, MemoryRangeChangedEventArgs e)
         {
-            // TODO: there are probably better ways to copy memory around
             var buffer = new byte[e.ChangedRangeLength];
             core.FillBufferFromMemory(e.ChangedRangeStartAddress, buffer, e.ChangedRangeLength, 0);
             memoryViewerForm!.RedrawChangedMemoryRange(e.ChangedRangeStartAddress, buffer);
@@ -236,11 +232,55 @@ namespace Celarix.JustForFun.ForeverEx
         private void Core_ConsoleOutputWritten(object? sender, ConsoleOutputWrittenEventArgs e)
         {
             terminal.WriteConsoleMessage(e.WrittenOutput);
-            terminal.Draw();
+            
+            if (terminal.RunningState != RunningState.Running)
+            {
+                terminal.Draw();
+            }
+        }
+
+        private void OpenMemoryViewerForm()
+        {
+            var ramBuffer = new byte[32768];
+            core.FillBufferFromMemory(0, ramBuffer, ramBuffer.Length, 0);
+            var romBankBuffer = new byte[32768];
+            core.FillBufferFromMemory(0x8000, romBankBuffer, romBankBuffer.Length, 0);
+
+            Task.Run(() =>
+            {
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+
+                memoryViewerForm = new MainForm(ramBuffer, romBankBuffer, core.SP, core.IP);
+
+                memoryViewerForm!.FormClosedByUser += (sender, args) =>
+                {
+                    core.MemoryViewerOpen = false;
+                    core.MemoryAddressChanged -= Core_MemoryAddressChanged;
+                    core.ROMBankSwitched -= Core_ROMBankSwitched;
+                    core.MemoryRangeChanged -= Core_MemoryRangeChanged;
+                    terminal.MemoryViewerOpen = false;
+                    memoryViewerForm = null;
+                };
+
+                Application.Run(memoryViewerForm);
+            });
+
+            core.MemoryViewerOpen = true;
+            core.MemoryAddressChanged += Core_MemoryAddressChanged;
+            core.ROMBankSwitched += Core_ROMBankSwitched;
+            core.MemoryRangeChanged += Core_MemoryRangeChanged;
+            terminal.MemoryViewerOpen = true;
         }
 
         private void UpdateTerminal()
         {
+            if (terminal.RunningState == RunningState.Running)
+            {
+                Console.WriteLine($"In Run Mode, executed {runModeInstructionCount} instructions. Press F6 to pause. SP: {core.SP}, IP: {core.IP}");
+                return;
+            }
+
             terminal.A = core.A;
             terminal.B = core.B;
             terminal.X = core.X;

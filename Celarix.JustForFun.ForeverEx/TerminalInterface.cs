@@ -716,9 +716,8 @@ namespace Celarix.JustForFun.ForeverEx
                     { "F10", "Step" },
                     { "F2", "Pin Memory" },
                     { "F3", "Unpin" },
-                    { "F4", "Dump" },
                     { "F12", "Memview" },
-                    { "^C", "Exit" }
+                    { "^D", "Exit" }
                 };
             }
             else
@@ -726,13 +725,9 @@ namespace Celarix.JustForFun.ForeverEx
                 commands = new Dictionary<string, string>
                 {
                     { "F6", "Pause" },
-                    { "F7", "Execute NOP Slide" }
+                    { "F7", "Execute NOP Slide" },
+                    { "F8", "Run" }
                 };
-
-                if (MemoryViewerOpen)
-                {
-                    commands.Add("F8", "Run");
-                }
             }
 
             foreach (var command in commands)
