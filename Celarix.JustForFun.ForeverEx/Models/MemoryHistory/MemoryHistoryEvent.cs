@@ -15,22 +15,13 @@ namespace Celarix.JustForFun.ForeverEx.Models.MemoryHistory
         {
             var eventType = reader.ReadByte();
 
-            if (eventType == ROMBankSwitched.HistoryEventID)
+            return eventType switch
             {
-                return ROMBankSwitched.ReadEvent(reader);
-            }
-            else if (eventType == MemoryRangeChanged.HistoryEventID)
-            {
-                return MemoryRangeChanged.ReadEvent(reader);
-            }
-            else if (eventType == SingleByteChanged.HistoryEventID)
-            {
-                return SingleByteChanged.ReadEvent(reader);
-            }
-            else
-            {
-                throw new InvalidOperationException($"Unknown memory history event type 0x{eventType:X2}");
-            }
+                ROMBankSwitched.HistoryEventID => ROMBankSwitched.ReadEvent(reader),
+                MemoryRangeChanged.HistoryEventID => MemoryRangeChanged.ReadEvent(reader),
+                SingleByteChanged.HistoryEventID => SingleByteChanged.ReadEvent(reader),
+                _ => throw new InvalidOperationException($"Unknown memory history event type 0x{eventType:X2}")
+            };
         }
     }
 }

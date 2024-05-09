@@ -2,7 +2,7 @@
   "profiles": {
     "Celarix.JustForFun.ForeverEx": {
       "commandName": "Project",
-      "commandLineArgs": "-m \"C:\\Users\\ChrisAckridge\\Personal OneDrive\\OneDrive\\Documents\\Writing\\Pretend Life Chronicles\\Epikenia\\Epikenia.txt\" -s -d \"C:\\Users\\ChrisAckridge\\Documents\\Notes\\Personal\\ForeverEx Dumps\\0\""
+      "commandLineArgs": "-d \"C:\\Users\\ChrisAckridge\\Personal OneDrive\\OneDrive\\Documents\\Writing\\Pretend Life Chronicles\\Epikenia\\Epikenia.txt\" \"C:\\Users\\ChrisAckridge\\Documents\\Notes\\Personal\\ForeverEx Dumps\\disassembly.txt\""
     }
   }
 }

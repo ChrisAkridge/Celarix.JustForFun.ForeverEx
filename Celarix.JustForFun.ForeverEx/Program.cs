@@ -1,4 +1,6 @@
-﻿namespace Celarix.JustForFun.ForeverEx
+﻿using Celarix.JustForFun.ForeverEx.Disassembly;
+
+namespace Celarix.JustForFun.ForeverEx
 {
     internal class Program
     {
@@ -10,27 +12,37 @@
                 return;
             }
 
-            var mappingModeArg = args[0];
-            var romImagePath = args[1];
-            var skipReads = args.Length > 2 && args[2] == "-s";
-
-            var mappingMode = args[0].ToLowerInvariant() switch
+            if (args[0].Equals("-m", StringComparison.InvariantCultureIgnoreCase) ||
+                args[0].Equals("-o", StringComparison.InvariantCultureIgnoreCase))
             {
-                "-m" => ROMMappingMode.Mapped16,
-                "-o" => ROMMappingMode.OverflowShifting,
-                _ => throw new ArgumentException($"Invalid mapping mode: {mappingModeArg}")
-            };
+                var mappingModeArg = args[0];
+                var romImagePath = args[1];
+                var skipReads = args.Length > 2 && args[2] == "-s";
 
-            var dumpMemory = args.Length > 3 && args[3] == "-d";
-            if (dumpMemory && args.Length != 5)
-            {
-                Usage();
-                return;
+                var mappingMode = args[0].ToLowerInvariant() switch
+                {
+                    "-m" => ROMMappingMode.Mapped16,
+                    "-o" => ROMMappingMode.OverflowShifting,
+                    _ => throw new ArgumentException($"Invalid mapping mode: {mappingModeArg}")
+                };
+
+                var dumpMemory = args.Length > 3 && args[3] == "-d";
+                if (dumpMemory && args.Length != 5)
+                {
+                    Usage();
+                    return;
+                }
+                var dumpMemoryPath = dumpMemory ? args[4] : null;
+
+                var connector = new Connector(mappingMode, romImagePath, skipReads, dumpMemoryPath);
+                connector.Run();
             }
-            var dumpMemoryPath = dumpMemory ? args[4] : null;
-
-            var connector = new Connector(mappingMode, romImagePath, skipReads, dumpMemoryPath);
-            connector.Run();
+            else if (args[0].Equals("-d", StringComparison.InvariantCultureIgnoreCase))
+            {
+                var romImagePath = args[1];
+                var disassemblyOutputPath = args[2];
+                FileDisassembler.DisassembleFile(romImagePath, disassemblyOutputPath);
+            }
         }
 
         private static void Usage()
@@ -48,6 +60,11 @@
             Console.WriteLine("\t\tIf -d is provided, <dumpPath> must be provided as well.");
             Console.WriteLine("\t<dumpPath>: The path to the folder to dump memory history into.");
             Console.WriteLine("\tromImagePath: The path to the ROM image to use. Can be any file.");
+            Console.WriteLine("OR:");
+            Console.WriteLine("\tCelarix.JustForFun.ForeverEx -d <romImagePath> <disassemblyOutputPath>");
+            Console.WriteLine("\t-d: If provided as the first argument, disassembles the ROM image at <romImagePath> and writes the output to <disassemblyOutputPath>.");
+            Console.WriteLine("\t<romImagePath>: The path to the ROM image to disassemble.");
+            Console.WriteLine("\t<disassemblyOutputPath>: The path to write the disassembly output to.");
         }
 
         

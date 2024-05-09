@@ -54,4 +54,10 @@ namespace Celarix.JustForFun.ForeverEx
         Register,
         RegisterToRegister
     }
+
+    internal enum AssemblySource
+    {
+        RunningProgram,
+        ByteStream
+    }
 }

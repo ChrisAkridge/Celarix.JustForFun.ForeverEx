@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Celarix.JustForFun.ForeverEx.Disassembly;
 using Celarix.JustForFun.ForeverEx.Models;
 using Celarix.JustForFun.ForeverExMemoryView;
 
@@ -15,10 +16,10 @@ namespace Celarix.JustForFun.ForeverEx
         private readonly TerminalInterface terminal;
 
         private MainForm? memoryViewerForm;
-        private MemoryHistoryWatcher? memoryHistoryWatcher;
+        private readonly MemoryHistoryWatcher? memoryHistoryWatcher;
 
         private readonly byte[] memoryBuffer = new byte[TerminalInterface.MemoryViewerByteCount];
-        private readonly DisassembledInstruction[] disassemblyBuffer = new DisassembledInstruction[TerminalInterface.DisassemblyLines];
+        private DisassembledInstruction[] disassemblyBuffer;
         private readonly byte[] disassemblyByteBuffer = new byte[128];
 
         private int runModeInstructionCount = 0;
@@ -299,7 +300,10 @@ namespace Celarix.JustForFun.ForeverEx
             terminal.SetMemory(memoryBuffer);
 
             core.FillBufferFromMemory(core.IP, disassemblyByteBuffer, disassemblyByteBuffer.Length, 0);
-            Disassembler.Disassemble(disassemblyByteBuffer, 0, core.IP, disassemblyBuffer);
+            disassemblyBuffer = Disassembler
+                .Disassemble(disassemblyByteBuffer, AssemblySource.RunningProgram, core.IP)
+                .Take(TerminalInterface.DisassemblyLines)
+                .ToArray();
 
             for (int i = 0; i < disassemblyBuffer.Length; i++)
             {

@@ -8,8 +8,9 @@ namespace Celarix.JustForFun.ForeverEx.Models
 {
     internal sealed class DisassembledInstruction
     {
+        public AssemblySource Source { get; set; }
         public bool IsCurrentInstruction { get; set; }
-        public ushort Address { get; set; }
+        public long Address { get; set; }
         public byte Opcode { get; set; }
         public byte? OperandByte1 { get; set; }
         public byte? OperandByte2 { get; set; }
